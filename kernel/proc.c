@@ -6,6 +6,10 @@
 #include "proc.h"
 #include "defs.h"
 
+struct list* UNUSED_list;
+struct list* SLEEPING_list;
+struct list* ZOMBIE_list;
+
 struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
@@ -19,6 +23,8 @@ extern void forkret(void);
 static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
+
+extern uint64 cas(volatile void *addr, int expected, int newval);
 
 // helps ensure that wakeups of wait()ing
 // parents are not lost. helps obey the
@@ -88,12 +94,9 @@ myproc(void) {
 int
 allocpid() {
   int pid;
-  
-  acquire(&pid_lock);
-  pid = nextpid;
-  nextpid = nextpid + 1;
-  release(&pid_lock);
-
+  do {
+    pid = nextpid;
+  } while (cas(&nextpid, pid, pid+1));
   return pid;
 }
 
@@ -653,4 +656,9 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+void
+insert(struct list* ls, int index) {
+
 }
