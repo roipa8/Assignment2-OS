@@ -6,9 +6,14 @@
 #include "proc.h"
 #include "defs.h"
 
-struct list* UNUSED_list;
-struct list* SLEEPING_list;
-struct list* ZOMBIE_list;
+int UNUSED_head = -1;
+int UNUSED_last = -1;
+int SLEEPING_head = -1;
+int SLEEPING_last = -1;
+int ZOMBIE_head = -1;
+int ZOMBIE_last = -1;
+
+enum list { UNUSED_LIST, SLEEPING_LIST, RUNNABLE_LIST, ZOMBIE_LIST};
 
 struct cpu cpus[NCPU];
 
@@ -48,6 +53,108 @@ proc_mapstacks(pagetable_t kpgtbl) {
   }
 }
 
+void print_list(enum list list) {
+  int first;
+  int last;
+  if (list == UNUSED_LIST) {
+    first = UNUSED_head;
+    last = UNUSED_last;
+  }
+  else if (list == SLEEPING_LIST) {
+    first = SLEEPING_head;
+    last = SLEEPING_last;
+  }
+  else if (list == ZOMBIE_LIST) {
+    first = ZOMBIE_head;
+    last = ZOMBIE_last;
+  }
+  else {
+    first = -1;
+    last = -1;
+  }
+  if (first == -1)
+    return;
+  struct proc *t = &proc[first];
+  while(t->index != last) {
+    printf("%d\n", t->index);
+    first = t->next;
+    t = &proc[first];
+  }
+  printf("%d\n", t->index);
+}
+
+void print_lists(void) {
+  printf("UNUSED\n");
+  print_list(UNUSED_LIST);
+  printf("SLEEPING\n");
+  print_list(SLEEPING_LIST);
+  printf("ZOMBIE\n");
+  print_list(ZOMBIE_LIST);
+}
+
+void insert(int new, enum list list) {
+  struct proc* p;
+  int last = -1;
+  if (list == UNUSED_LIST)
+    last = UNUSED_last;
+  else if (list == SLEEPING_LIST)
+    last = SLEEPING_last;
+  else if (list == ZOMBIE_LIST)
+    last = ZOMBIE_last;
+  if (last != -1) {
+    p = &proc[last];
+    acquire(&p->link);
+    p->next = new;
+  }
+  if (list == UNUSED_LIST) {
+    UNUSED_last = new;
+    if (last == -1)
+      UNUSED_head = new;
+  }
+  else if (list == SLEEPING_LIST) {
+    SLEEPING_last = new;
+    if (last == -1)
+      SLEEPING_head = new;
+  }
+  else if (list == ZOMBIE_LIST) {
+    ZOMBIE_last = new;
+    if (last == -1)
+      ZOMBIE_head = new;
+  }
+  if (last != -1)
+    release(&p->link);
+}
+
+void remove(int index, enum list list) {
+  struct proc* pred;
+  struct proc* curr;
+  if (list == UNUSED_LIST) {
+    pred = &proc[UNUSED_head];
+    acquire(&pred->link);
+    if (UNUSED_head == UNUSED_last) {
+      UNUSED_head = -1;
+      UNUSED_last = -1;
+    }
+    else if (UNUSED_head == index)
+      UNUSED_head = pred->next;
+    else {
+      curr = &proc[pred->next];
+      acquire(&curr->link);
+      while (curr->index != index) {
+        release(&pred->link);
+        pred = curr;
+        curr = &proc[pred->next];
+        acquire(&curr->link);
+      }
+      if (curr->index == UNUSED_last)
+        UNUSED_last = pred->index;
+      else pred->next = curr->next;
+      release(&curr->link);
+    }
+    release(&pred->link);
+  }
+}
+
 // initialize the proc table at boot time.
 void
 procinit(void)
@@ -56,9 +163,17 @@ procinit(void)
   
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
+  int i = 0;
+  UNUSED_head = i;
+  UNUSED_last = i;
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
       p->kstack = KSTACK((int) (p - proc));
+      p->index = i;
+      i++;
+      if (i == NPROC)
+        break;
+      insert(i ,UNUSED_LIST);
   }
 }
 
@@ -122,7 +237,7 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
-
+  remove(p->index, UNUSED_LIST);
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
@@ -143,7 +258,6 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
-
   return p;
 }
 
@@ -246,7 +360,6 @@ userinit(void)
   p->cwd = namei("/");
 
   p->state = RUNNABLE;
-
   release(&p->lock);
 }
 
@@ -317,7 +430,6 @@ fork(void)
   acquire(&np->lock);
   np->state = RUNNABLE;
   release(&np->lock);
-
   return pid;
 }
 
@@ -656,9 +768,4 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
-}
-
-void
-insert(struct list* ls, int index) {
-
 }
