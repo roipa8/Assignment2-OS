@@ -604,23 +604,36 @@ scheduler(void)
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
+    if(c->RUNNABLE_head==-1)
+      continue;
+    p = &proc[c->RUNNABLE_head];
+    acquire(&p->lock);
+    p->state = RUNNING;
+    remove(p->index, RUNNABLE_LIST);
+    c->proc = p;
+    swtch(&c->context, &p->context);
+    printf("The state is %d\n", p->state);
+    // Process is done running for now.
+    // It should have changed its p->state before coming back.
+    c->proc = 0;
+    release(&p->lock);
+    
+    // for(p = proc; p < &proc[NPROC]; p++) {
+    //   acquire(&p->lock);
+    //   if(p->state == RUNNABLE) {
+    //     // Switch to chosen process.  It is the process's job
+    //     // to release its lock and then reacquire it
+    //     // before jumping back to us.
+    //     p->state = RUNNING;
+    //     c->proc = p;
+    //     swtch(&c->context, &p->context);
 
-    for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-      if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
-
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-      }
-      release(&p->lock);
-    }
+    //     // Process is done running for now.
+    //     // It should have changed its p->state before coming back.
+    //     c->proc = 0;
+    //   }
+    //   release(&p->lock);
+    // }
   }
 }
 
@@ -658,6 +671,7 @@ yield(void)
   struct proc *p = myproc();
   acquire(&p->lock);
   p->state = RUNNABLE;
+  insert(p->index, RUNNABLE_LIST);
   sched();
   release(&p->lock);
 }
@@ -703,6 +717,7 @@ sleep(void *chan, struct spinlock *lk)
   // Go to sleep.
   p->chan = chan;
   p->state = SLEEPING;
+  insert(p->index, SLEEPING_LIST);
 
   sched();
 
@@ -720,16 +735,37 @@ void
 wakeup(void *chan)
 {
   struct proc *p;
-
-  for(p = proc; p < &proc[NPROC]; p++) {
-    if(p != myproc()){
-      acquire(&p->lock);
-      if(p->state == SLEEPING && p->chan == chan) {
+  if(heads[SLEEPING_LIST]!=-1){
+    p = &proc[heads[SLEEPING_LIST]];
+    // acquire(&p->link);
+    while(p->index != lasts[SLEEPING_LIST]) {
+      if(p->chan == chan) {
         p->state = RUNNABLE;
+        remove(p->index, SLEEPING_LIST);
+        insert(p->index, RUNNABLE_LIST);
       }
-      release(&p->lock);
+      // release(&p->link);
+      p = &proc[p->next];
+      // acquire(&p->link);
     }
+    if(p->chan == chan) {
+        p->state = RUNNABLE;
+        remove(p->index, SLEEPING_LIST);
+        insert(p->index, RUNNABLE_LIST);
+    }
+    printf("Check\n");
+    // release(&p->link);
   }
+  // for(p = proc; p < &proc[NPROC]; p++) {
+  //   if(p != myproc()){
+  //     acquire(&p->lock);
+  //     if(p->state == SLEEPING && p->chan == chan) {
+  //       p->state = RUNNABLE;
+  //       insert(p->index, RUNNABLE_LIST);
+  //     }
+  //     release(&p->lock);
+  //   }
+  // }
 }
 
 // Kill the process with the given pid.
