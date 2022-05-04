@@ -37,6 +37,20 @@ extern uint64 cas(volatile void *addr, int expected, int newval);
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
 
+int
+set_cpu(int cpu_num)
+{
+  struct proc *p;
+  return -1;
+}
+
+int
+get_cpu(void)
+{
+  
+}
+
+
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
