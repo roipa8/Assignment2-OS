@@ -13,6 +13,8 @@
 // int ZOMBIE_head = -1;
 // int ZOMBIE_last = -1;
 
+int CHECK = 0;
+
 enum list {UNUSED_LIST, SLEEPING_LIST, ZOMBIE_LIST, RUNNABLE_LIST};
 int heads[] = {-1, -1, -1};
 int lasts[] = {-1, -1 ,-1};
@@ -403,7 +405,6 @@ userinit(void)
   p->state = RUNNABLE;
   p->cpu = cpuid();
   insert(p->index, RUNNABLE_LIST);
-  // print_lists();
   release(&p->lock);
 }
 
@@ -606,37 +607,37 @@ scheduler(void)
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
-    // if(c->RUNNABLE_head==-1){
-    //   continue;
-    // }
-    // p = &proc[c->RUNNABLE_head];
-    // acquire(&p->lock);
-    // p->state = RUNNING;
-    // remove(p->index, RUNNABLE_LIST);
-    // c->proc = p;
-    // swtch(&c->context, &p->context);
-    // // printf("The state is %d\n", p->state);
-    // // Process is done running for now.
-    // // It should have changed its p->state before coming back.
-    // c->proc = 0;
-    // release(&p->lock);
-    
-    for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-      if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
-
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-      }
-      release(&p->lock);
+    if(c->RUNNABLE_head==-1){
+      continue;
     }
+    p = &proc[c->RUNNABLE_head];
+    acquire(&p->lock);
+    p->state = RUNNING;
+    remove(p->index, RUNNABLE_LIST);
+    c->proc = p;
+    swtch(&c->context, &p->context);
+    // printf("The state is %d\n", p->state);
+    // Process is done running for now.
+    // It should have changed its p->state before coming back.
+    c->proc = 0;
+    release(&p->lock);
+    
+    // for(p = proc; p < &proc[NPROC]; p++) {
+    //   acquire(&p->lock);
+    //   if(p->state == RUNNABLE) {
+    //     // Switch to chosen process.  It is the process's job
+    //     // to release its lock and then reacquire it
+    //     // before jumping back to us.
+    //     p->state = RUNNING;
+    //     c->proc = p;
+    //     swtch(&c->context, &p->context);
+
+    //     // Process is done running for now.
+    //     // It should have changed its p->state before coming back.
+    //     c->proc = 0;
+    //   }
+    //   release(&p->lock);
+    // }
   }
 }
 
@@ -737,39 +738,75 @@ sleep(void *chan, struct spinlock *lk)
 void
 wakeup(void *chan)
 {
-  struct proc *p;
+  print_lists();
+  // if (CHECK < 100) {
+  //   printf("BEFORE:\n\n");
+  //   print_lists();
+  // }
+  struct proc *pred;
+  struct proc *curr;
+
   if(heads[SLEEPING_LIST]!=-1){
-    p = &proc[heads[SLEEPING_LIST]];
-    // acquire(&p->link);
-    while(p->index != lasts[SLEEPING_LIST]) {
-      if(p->chan == chan) {
-        p->state = RUNNABLE;
-        remove(p->index, SLEEPING_LIST);
-        insert(p->index, RUNNABLE_LIST);
+    pred = &proc[heads[SLEEPING_LIST]];
+    acquire(&pred->link);
+    if (heads[SLEEPING_LIST] == lasts[SLEEPING_LIST]) {   // list length 1
+      if(pred->chan == chan) {
+        pred->state = RUNNABLE;
+        heads[SLEEPING_LIST] = -1;
+        lasts[SLEEPING_LIST] = -1;
+        insert(pred->index, RUNNABLE_LIST);
       }
-      // release(&p->link);
-      p = &proc[p->next];
-      // acquire(&p->link);
+      release(&pred->link);
+      return;
     }
-    if(p->chan == chan) {
-        // print_lists();
-        p->state = RUNNABLE;
-        remove(p->index, SLEEPING_LIST);
-        insert(p->index, RUNNABLE_LIST);
-        // print_lists();
+    while(pred->chan == chan && pred->index != lasts[SLEEPING_LIST]) {  // list length > 1
+      pred->state = RUNNABLE;
+      heads[SLEEPING_LIST] = pred->next;
+      insert(pred->index, RUNNABLE_LIST);
+      release(&pred->link);
+      pred = &proc[pred->next];
+      acquire(&pred->link);
     }
-    // release(&p->link);
+    if (pred->index == lasts[SLEEPING_LIST]) {
+      if(pred->chan == chan) {
+        pred->state = RUNNABLE;
+        heads[SLEEPING_LIST] = -1;
+        lasts[SLEEPING_LIST] = -1;
+        insert(pred->index, RUNNABLE_LIST);
+      }
+      release(&pred->link);
+      return;
+    }
+    curr = &proc[pred->next];
+    acquire(&curr->link);
+    while (curr->index != lasts[SLEEPING_LIST]) {
+      if(curr->chan == chan) {
+        curr->state = RUNNABLE;
+        insert(curr->index, RUNNABLE_LIST);
+        pred->next = curr->next;
+        release(&curr->link);
+        curr = &proc[curr->next];
+        acquire(&curr->link);
+      }
+      else {
+        release(&pred->link);
+        pred = curr;
+        curr = &proc[curr->next];
+        acquire(&curr->link);
+      }
+    }
+    if (curr->chan == chan) {
+      curr->state = RUNNABLE;
+      insert(curr->index, RUNNABLE_LIST);
+      lasts[SLEEPING_LIST] = pred->index;
+    }
+    release(&curr->link);
+    release(&pred->link);
   }
-  // for(p = proc; p < &proc[NPROC]; p++) {
-  //   if(p != myproc()){
-  //     acquire(&p->lock);
-  //     if(p->state == SLEEPING && p->chan == chan) {
-  //       p->state = RUNNABLE;
-  //       remove(p->index, SLEEPING_LIST);
-  //       insert(p->index, RUNNABLE_LIST);
-  //     }
-  //     release(&p->lock);
-  //   }
+  // if (CHECK < 100) {
+  //   printf("AFTER:\n\n");
+  //   print_lists();
+  //   CHECK++;
   // }
 }
 
@@ -788,6 +825,8 @@ kill(int pid)
       if(p->state == SLEEPING){
         // Wake process from sleep().
         p->state = RUNNABLE;
+        remove(p->index, SLEEPING_LIST);
+        insert(p->index, RUNNABLE_LIST);
       }
       release(&p->lock);
       return 0;
