@@ -178,6 +178,7 @@ procinit(void)
     initlock(&p->link, "head_link");
     p->index = -1;
     p->next = -1;
+    c->counter = 0;
   }
   i = 0;
   for(p = proc; p < &proc[NPROC]; p++) {
@@ -381,6 +382,11 @@ userinit(void)
 
   p->state = RUNNABLE;
   p->cpu = cpuid();
+  int counter;
+  do {
+    counter = cpu_process_count(p->cpu);
+  } while (cas(&(&cpus[p->cpu])->counter, counter, counter+1));
+  printf("count: %d\n", (&cpus[p->cpu])->counter);
   insert(p->index, RUNNABLE_LIST);
   release(&p->lock);
 }
@@ -566,6 +572,15 @@ wait(uint64 addr)
 //  - swtch to start running that process.
 //  - eventually that process transfers control
 //    via swtch back to the scheduler.
+
+  // #ifdef OFF
+  //   round_robin();
+  // #endif
+
+  // #ifdef ON
+  //   round_robin();
+  // #endif
+
 void
 scheduler(void)
 {
@@ -829,4 +844,10 @@ get_cpu(void)
 {
   struct proc* p = myproc();
   return p->cpu;
+}
+
+int
+cpu_process_count(int cpu_num)
+{
+  return (&cpus[cpu_num])->counter;
 }

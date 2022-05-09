@@ -114,5 +114,6 @@ struct cpu {
   int intena;                 // Were interrupts enabled before push_off()?
 
   struct proc head_runnable;
+  uint64 counter;
 };
 extern struct cpu cpus[NCPU];
