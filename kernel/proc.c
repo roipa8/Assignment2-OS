@@ -101,25 +101,23 @@ void insert(int new, enum list list) {
   struct cpu* cpu;
   if (list == RUNNABLE_LIST) {  // RUNNABLE
     p = &proc[new];
-    printf("A\n");
     acquire(&p->link);
     cpu = &cpus[p->cpu];
     release(&p->link);
     p = &(cpu->head_runnable);
   }
   else p = proc_heads[list];    // UNUSED, SLEEPING, ZOMBIE 
-  printf("%d\n", list);
-      printf("B\n");
-  printf("%s\n",p->name);
   acquire(&p->link);
   while (p->next != -1) {
     release(&p->link);
     p = &proc[p->next];
-        printf("C\n");
-
     acquire(&p->link);
   }
   p->next = new;
+  release(&p->link);
+  p = &proc[new];
+  acquire(&p->link);
+  p->next = -1;
   release(&p->link);
 }
 
@@ -130,28 +128,20 @@ void remove(int index, enum list list) {
   struct proc* curr;
   if (list == RUNNABLE_LIST) {  // RUNNABLE
     p = &proc[index];
-        printf("D\n");
-
     acquire(&p->link);
     cpu = &cpus[p->cpu];
     release(&p->link);
     pred = &(cpu->head_runnable);
   }
   else pred = proc_heads[list]; // UNUSED, SLEEPING, ZOMBIE
-      printf("E\n");
-
   acquire(&pred->link);
   if (pred->next != -1) {
     curr = &proc[pred->next];
-        printf("F\n");
-
     acquire(&curr->link);
     while (curr->index != index && curr->next != -1) {
       release(&pred->link);
       pred = curr;
       curr = &proc[pred->next];
-          printf("G\n");
-
       acquire(&curr->link);
     }
     if (curr->index == index)   // found
@@ -176,6 +166,11 @@ procinit(void)
     initlock(&proc_heads[i]->link, "head_link");
     proc_heads[i]->index = -1;
     proc_heads[i]->next = -1;
+    if (i == 1) {
+      proc_heads[i]->name[0] = 's';
+      proc_heads[i]->name[1] = 'k';
+    }
+
   }
   for (c = cpus; c < &cpus[NCPU]; c++) {
     p = &(c->head_runnable);
@@ -197,6 +192,7 @@ procinit(void)
       p->cpu = -1;
       insert(i ,UNUSED_LIST);
   }
+
 }
 
 // Must be called with interrupts disabled,
@@ -247,8 +243,6 @@ allocproc(void)
   struct proc *p;
 
   for(p = proc; p < &proc[NPROC]; p++) {
-        printf("H\n");
-
     acquire(&p->lock);
     if(p->state == UNUSED) {
       goto found;
@@ -449,17 +443,12 @@ fork(void)
   pid = np->pid;
 
   release(&np->lock);
-    printf("I\n");
-
   acquire(&wait_lock);
   np->parent = p;
   release(&wait_lock);
-    printf("J\n");
-
   acquire(&np->lock);
   np->state = RUNNABLE;
   np->cpu = p->cpu;
-  // printf("CPU %d\n", np->cpu);
   insert(np->index, RUNNABLE_LIST);
   release(&np->lock);
   return pid;
@@ -487,12 +476,12 @@ void
 exit(int status)
 {
   struct proc *p = myproc();
-
   if(p == initproc)
     panic("init exiting");
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
+
     if(p->ofile[fd]){
       struct file *f = p->ofile[fd];
       fileclose(f);
@@ -504,17 +493,11 @@ exit(int status)
   iput(p->cwd);
   end_op();
   p->cwd = 0;
-    printf("K\n");
-
   acquire(&wait_lock);
-
   // Give any children to init.
   reparent(p);
-
   // Parent might be sleeping in wait().
   wakeup(p->parent);
-      printf("L\n");
-
   acquire(&p->lock);
 
   p->xstate = status;
@@ -523,6 +506,7 @@ exit(int status)
   release(&wait_lock);
 
   // Jump into the scheduler, never to return.
+
   sched();
   panic("zombie exit");
 }
@@ -535,8 +519,6 @@ wait(uint64 addr)
   struct proc *np;
   int havekids, pid;
   struct proc *p = myproc();
-    printf("M\n");
-
   acquire(&wait_lock);
 
   for(;;){
@@ -545,8 +527,6 @@ wait(uint64 addr)
     for(np = proc; np < &proc[NPROC]; np++){
       if(np->parent == p){
         // make sure the child isn't still in exit() or swtch().
-            printf("N\n");
-
         acquire(&np->lock);
 
         havekids = 1;
@@ -597,22 +577,16 @@ scheduler(void)
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
     p = &(c->head_runnable);
-        printf("O\n");
-
     acquire(&p->lock);
     if(p->next == -1){      // no runnable process
       release(&p->lock);
       continue;
     }
-    // print_lists();
     next = &proc[p->next];
-        printf("P\n");
-
     acquire(&next->lock);
     release(&p->lock);
     next->state = RUNNING;
     remove(next->index, RUNNABLE_LIST);
-            printf("A\n");
 
     c->proc = next;
     swtch(&c->context, &next->context);
@@ -655,8 +629,6 @@ void
 yield(void)
 {
   struct proc *p = myproc();
-      printf("Q\n");
-
   acquire(&p->lock);
   p->state = RUNNABLE;
   insert(p->index, RUNNABLE_LIST);
@@ -691,16 +663,13 @@ void
 sleep(void *chan, struct spinlock *lk)
 {
   struct proc *p = myproc();
-  // printf("P: %s\n", p->name);
-  //   int* chane = (int*)chan;
-  //     printf("CHAN: %d\n", *chane);
+
   // Must acquire p->lock in order to
   // change p->state and then call sched.
   // Once we hold p->lock, we can be
   // guaranteed that we won't miss any wakeup
   // (wakeup locks p->lock),
   // so it's okay to release lk.
-    printf("R\n");
 
   acquire(&p->lock);  //DOC: sleeplock1
   release(lk);
@@ -718,8 +687,6 @@ sleep(void *chan, struct spinlock *lk)
   // Reacquire original lock.
 
   release(&p->lock);
-      printf("S\n");
-
   acquire(lk);
 }
 
@@ -731,42 +698,36 @@ wakeup(void *chan)
   struct proc *pred;
   struct proc *curr;
   pred = proc_heads[SLEEPING_LIST];
-      printf("T\n");
 
   acquire(&pred->link);
   if(pred->next != -1) {
     curr = &proc[pred->next];
-        printf("U\n");
-
     acquire(&curr->link);
     while (curr->next != -1) {
       if(curr->chan == chan) {
         curr->state = RUNNABLE;
         pred->next = curr->next;
-        insert(curr->index, RUNNABLE_LIST);
         release(&curr->link);
-        curr = &proc[curr->next];
-            printf("V\n");
-
+        insert(curr->index, RUNNABLE_LIST);
+        curr = &proc[pred->next];
         acquire(&curr->link);
       }
       else {
         release(&pred->link);
         pred = curr;
         curr = &proc[curr->next];
-            printf("W\n");
-
         acquire(&curr->link);
       }
     }
     if (curr->chan == chan) {
       curr->state = RUNNABLE;
       pred->next = -1;
+      release(&curr->link);
       insert(curr->index, RUNNABLE_LIST);
     }
-    release(&curr->link);
-    release(&pred->link);
+    else release(&curr->link);
   }
+  release(&pred->link);
 }
 
 // Kill the process with the given pid.
@@ -778,8 +739,6 @@ kill(int pid)
   struct proc *p;
 
   for(p = proc; p < &proc[NPROC]; p++){
-        printf("X\n");
-
     acquire(&p->lock);
     if(p->pid == pid){
       p->killed = 1;
