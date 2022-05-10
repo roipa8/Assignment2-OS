@@ -180,11 +180,6 @@ procinit(void)
     initlock(&proc_heads[i]->link, "head_link");
     proc_heads[i]->index = -1;
     proc_heads[i]->next = -1;
-    if (i == 1) {
-      proc_heads[i]->name[0] = 's';
-      proc_heads[i]->name[1] = 'k';
-    }
-
   }
   for (c = cpus; c < &cpus[NCPU]; c++) {
     p = &(c->head_runnable);
@@ -396,11 +391,11 @@ userinit(void)
 
   p->state = RUNNABLE;
   p->cpu = cpuid();
-  int counter;
   #ifdef ON
+  int counter;
     do {
       counter = (&cpus[p->cpu])->counter;
-    } while (cas(&(&cpus[p->cpu])->counter, counter, counter+1));
+    } while (cas(&((&cpus[p->cpu])->counter), counter, counter+1));
   #endif
   insert(p->index, RUNNABLE_LIST);
   release(&p->lock);
@@ -469,16 +464,13 @@ fork(void)
   release(&wait_lock);
   acquire(&np->lock);
   np->state = RUNNABLE;
-  int cpu_id;
+  int cpu_id = p->cpu;
   #ifdef ON
     cpu_id = get_least_used_cpu();
     int counter;
     do {
       counter = (&cpus[cpu_id])->counter;
-    } while (cas(&(&cpus[cpu_id])->counter, counter, counter+1));
-  #endif
-  #ifdef OFF
-    cpu_id = p->cpu;
+    } while (cas(&((&cpus[cpu_id])->counter), counter, counter+1));
   #endif
   np->cpu = cpu_id;
   insert(np->index, RUNNABLE_LIST);
@@ -538,7 +530,6 @@ exit(int status)
   release(&wait_lock);
 
   // Jump into the scheduler, never to return.
-
   sched();
   panic("zombie exit");
 }
@@ -622,12 +613,12 @@ scheduler(void)
       release(&p->lock);
       continue;
     }
+
     next = &proc[p->next];
     acquire(&next->lock);
-    release(&p->lock);
     next->state = RUNNING;
+    release(&p->lock);
     remove(next->index, RUNNABLE_LIST);
-
     c->proc = next;
     swtch(&c->context, &next->context);
     // Process is done running for now.
@@ -753,7 +744,7 @@ wakeup(void *chan)
           int counter;
           do {
             counter = (&cpus[cpu_id])->counter;
-          } while (cas(&(&cpus[cpu_id])->counter, counter, counter+1));
+          } while (cas(&((&cpus[cpu_id])->counter), counter, counter+1));
         #endif
         release(&curr->link);
         insert(curr->index, RUNNABLE_LIST);
@@ -776,7 +767,7 @@ wakeup(void *chan)
         int counter;
         do {
           counter = (&cpus[cpu_id])->counter;
-        } while (cas(&(&cpus[cpu_id])->counter, counter, counter+1));
+        } while (cas(&((&cpus[cpu_id])->counter), counter, counter+1));
       #endif
       release(&curr->link);
       insert(curr->index, RUNNABLE_LIST);
