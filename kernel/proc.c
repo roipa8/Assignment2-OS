@@ -10,6 +10,8 @@ struct proc head_unused;
 struct proc head_sleeping;
 struct proc head_zombie;
 
+uint64 curr_cpu_num = 0;
+
 struct proc *proc_heads[] = {&head_unused, &head_sleeping, &head_zombie};
 
 enum list {UNUSED_LIST, SLEEPING_LIST, ZOMBIE_LIST, RUNNABLE_LIST};
@@ -149,6 +151,18 @@ void remove(int index, enum list list) {
     release(&curr->link);
   }
   release(&pred->link);
+}
+
+int
+get_least_used_cpu(void)
+{
+  int cpu_id = 0;
+  for(int i = 1; i < curr_cpu_num; i++){
+    if((&cpus[i])->counter < (&cpus[cpu_id])->counter){
+      cpu_id = i;
+    }
+  }
+  return cpu_id;
 }
 
 // initialize the proc table at boot time.
@@ -384,7 +398,7 @@ userinit(void)
   p->cpu = cpuid();
   int counter;
   do {
-    counter = cpu_process_count(p->cpu);
+    counter = (&cpus[p->cpu])->counter;
   } while (cas(&(&cpus[p->cpu])->counter, counter, counter+1));
   printf("count: %d\n", (&cpus[p->cpu])->counter);
   insert(p->index, RUNNABLE_LIST);
@@ -454,7 +468,18 @@ fork(void)
   release(&wait_lock);
   acquire(&np->lock);
   np->state = RUNNABLE;
-  np->cpu = p->cpu;
+  int cpu_id;
+  #ifdef ON
+    cpu_id = get_least_used_cpu();
+    int counter;
+    do {
+      counter = (&cpus[cpu_id])->counter;
+    } while (cas(&(&cpus[cpu_id])->counter, counter, counter+1));
+  #endif
+  #ifdef OFF
+    cpu_id = p->cpu;
+  #endif
+  np->cpu = cpu_id;
   insert(np->index, RUNNABLE_LIST);
   release(&np->lock);
   return pid;
@@ -573,13 +598,6 @@ wait(uint64 addr)
 //  - eventually that process transfers control
 //    via swtch back to the scheduler.
 
-  // #ifdef OFF
-  //   round_robin();
-  // #endif
-
-  // #ifdef ON
-  //   round_robin();
-  // #endif
 
 void
 scheduler(void)
@@ -588,6 +606,12 @@ scheduler(void)
   struct proc *next;
   struct cpu *c = mycpu();
   c->proc = 0;
+  #ifdef ON
+    int cpuCount;
+    do {
+      cpuCount = curr_cpu_num;
+    } while (cas(&curr_cpu_num, cpuCount, cpuCount+1));
+  #endif
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
@@ -722,6 +746,14 @@ wakeup(void *chan)
       if(curr->chan == chan) {
         curr->state = RUNNABLE;
         pred->next = curr->next;
+        #ifdef ON
+          int cpu_id = get_least_used_cpu();
+          curr->cpu = cpu_id;
+          int counter;
+          do {
+            counter = (&cpus[cpu_id])->counter;
+          } while (cas(&(&cpus[cpu_id])->counter, counter, counter+1));
+        #endif
         release(&curr->link);
         insert(curr->index, RUNNABLE_LIST);
         curr = &proc[pred->next];
@@ -737,6 +769,14 @@ wakeup(void *chan)
     if (curr->chan == chan) {
       curr->state = RUNNABLE;
       pred->next = -1;
+      #ifdef ON
+        int cpu_id = get_least_used_cpu();
+        curr->cpu = cpu_id;
+        int counter;
+        do {
+          counter = (&cpus[cpu_id])->counter;
+        } while (cas(&(&cpus[cpu_id])->counter, counter, counter+1));
+      #endif
       release(&curr->link);
       insert(curr->index, RUNNABLE_LIST);
     }
@@ -851,3 +891,4 @@ cpu_process_count(int cpu_num)
 {
   return (&cpus[cpu_num])->counter;
 }
+
