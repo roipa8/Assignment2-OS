@@ -397,10 +397,11 @@ userinit(void)
   p->state = RUNNABLE;
   p->cpu = cpuid();
   int counter;
-  do {
-    counter = (&cpus[p->cpu])->counter;
-  } while (cas(&(&cpus[p->cpu])->counter, counter, counter+1));
-  printf("count: %d\n", (&cpus[p->cpu])->counter);
+  #ifdef ON
+    do {
+      counter = (&cpus[p->cpu])->counter;
+    } while (cas(&(&cpus[p->cpu])->counter, counter, counter+1));
+  #endif
   insert(p->index, RUNNABLE_LIST);
   release(&p->lock);
 }
