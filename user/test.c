@@ -73,10 +73,39 @@ manywrites(char *s)
   }
 }
 
+void
+twochildren(char *s)
+{
+  for(int i = 0; i < 1000; i++){
+    int pid1 = fork();
+    if(pid1 < 0){
+      printf("%s: fork failed\n", s);
+      exit(1);
+    }
+    if(pid1 == 0){
+      exit(0);
+    } else {
+      int pid2 = fork();
+      if(pid2 < 0){
+        printf("%s: fork failed\n", s);
+        exit(1);
+      }
+      if(pid2 == 0){
+        exit(0);
+      } else {
+        wait(0);
+        wait(0);
+      }
+    }
+  }
+}
+
+
 
 int main(int argc, char** argv){
     // testCAS();
     manywrites("manywrites");
-    printf("OK\n");
+    // twochildren("twochildren");
+    // printf("OK\n");
     exit(0);
 }
