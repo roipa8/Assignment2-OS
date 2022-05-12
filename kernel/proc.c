@@ -11,6 +11,7 @@ struct proc head_sleeping;
 struct proc head_zombie;
 
 uint64 curr_cpu_num = 0;
+int min_cpu = 0;
 
 struct proc *proc_heads[] = {&head_unused, &head_sleeping, &head_zombie};
 
@@ -99,6 +100,7 @@ void print_lists(void) {
 }
 
 void insert(int new, enum list list) {
+  struct proc* temp;
   struct proc* p;
   struct cpu* cpu;
   if (list == RUNNABLE_LIST) {  // RUNNABLE
@@ -111,9 +113,10 @@ void insert(int new, enum list list) {
   else p = proc_heads[list];    // UNUSED, SLEEPING, ZOMBIE 
   acquire(&p->link);
   while (p->next != -1) {
+    temp = &proc[p->next];
+    acquire(&temp->link);
     release(&p->link);
-    p = &proc[p->next];
-    acquire(&p->link);
+    p = temp;
   }
   p->next = new;
   release(&p->link);
@@ -466,7 +469,7 @@ fork(void)
   np->state = RUNNABLE;
   int cpu_id = p->cpu;
   #ifdef ON
-    cpu_id = get_least_used_cpu();
+    cpu_id = min_cpu;
     int counter;
     do {
       counter = (&cpus[cpu_id])->counter;
@@ -543,7 +546,6 @@ wait(uint64 addr)
   int havekids, pid;
   struct proc *p = myproc();
   acquire(&wait_lock);
-
   for(;;){
     // Scan through table looking for exited children.
     havekids = 0;
@@ -605,6 +607,10 @@ scheduler(void)
     } while (cas(&curr_cpu_num, cpuCount, cpuCount+1));
   #endif
   for(;;){
+    #ifdef ON
+    if (c->counter < (&cpus[min_cpu])->counter)
+      min_cpu = cpuid();
+    #endif
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
     p = &(c->head_runnable);
@@ -616,9 +622,9 @@ scheduler(void)
 
     next = &proc[p->next];
     acquire(&next->lock);
+    remove(next->index, RUNNABLE_LIST);
     next->state = RUNNING;
     release(&p->lock);
-    remove(next->index, RUNNABLE_LIST);
     c->proc = next;
     swtch(&c->context, &next->context);
     // Process is done running for now.
@@ -703,12 +709,12 @@ sleep(void *chan, struct spinlock *lk)
   // so it's okay to release lk.
 
   acquire(&p->lock);  //DOC: sleeplock1
+  insert(p->index, SLEEPING_LIST);
   release(lk);
 
   // Go to sleep.
   p->chan = chan;
   p->state = SLEEPING;
-  insert(p->index, SLEEPING_LIST);
 
   sched();
 
@@ -729,52 +735,30 @@ wakeup(void *chan)
   struct proc *pred;
   struct proc *curr;
   pred = proc_heads[SLEEPING_LIST];
-
-  acquire(&pred->link);
-  if(pred->next != -1) {
-    curr = &proc[pred->next];
-    acquire(&curr->link);
-    while (curr->next != -1) {
+  acquire(&pred->lock);
+    while (pred->next != -1) {
+      curr = &proc[pred->next];
+      acquire(&curr->lock);
       if(curr->chan == chan) {
         curr->state = RUNNABLE;
         pred->next = curr->next;
         #ifdef ON
-          int cpu_id = get_least_used_cpu();
+          int cpu_id = min_cpu;
           curr->cpu = cpu_id;
           int counter;
           do {
             counter = (&cpus[cpu_id])->counter;
           } while (cas(&((&cpus[cpu_id])->counter), counter, counter+1));
         #endif
-        release(&curr->link);
         insert(curr->index, RUNNABLE_LIST);
-        curr = &proc[pred->next];
-        acquire(&curr->link);
+        release(&curr->lock);
       }
       else {
-        release(&pred->link);
+        release(&pred->lock);
         pred = curr;
-        curr = &proc[curr->next];
-        acquire(&curr->link);
       }
     }
-    if (curr->chan == chan) {
-      curr->state = RUNNABLE;
-      pred->next = -1;
-      #ifdef ON
-        int cpu_id = get_least_used_cpu();
-        curr->cpu = cpu_id;
-        int counter;
-        do {
-          counter = (&cpus[cpu_id])->counter;
-        } while (cas(&((&cpus[cpu_id])->counter), counter, counter+1));
-      #endif
-      release(&curr->link);
-      insert(curr->index, RUNNABLE_LIST);
-    }
-    else release(&curr->link);
-  }
-  release(&pred->link);
+  release(&pred->lock);
 }
 
 // Kill the process with the given pid.
@@ -883,4 +867,3 @@ cpu_process_count(int cpu_num)
 {
   return (&cpus[cpu_num])->counter;
 }
-
