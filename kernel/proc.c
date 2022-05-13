@@ -178,12 +178,15 @@ procinit(void)
   initlock(&wait_lock, "wait_lock");
   int i = 0;
 
+  // initilize heads locks
   for (i = 0; i < 3; i++) {
     initlock(&proc_heads[i]->lock, "head");
     initlock(&proc_heads[i]->link, "head_link");
     proc_heads[i]->index = -1;
     proc_heads[i]->next = -1;
   }
+
+  // initilize cpus locks
   for (c = cpus; c < &cpus[NCPU]; c++) {
     p = &(c->head_runnable);
     initlock(&p->lock, "head");
@@ -192,6 +195,8 @@ procinit(void)
     p->next = -1;
     c->counter = 0;
   }
+
+  // initilize procs locks
   i = 0;
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
@@ -205,7 +210,6 @@ procinit(void)
       p->cpu = -1;
       insert(i ,UNUSED_LIST);
   }
-
 }
 
 // Must be called with interrupts disabled,
@@ -617,20 +621,48 @@ scheduler(void)
     acquire(&p->lock);
     if(p->next == -1){      // no runnable process
       release(&p->lock);
-      continue;
+      #ifdef ON
+        for (int i = 0; i < curr_cpu_num; i++) {
+          if (i == cpuid())
+            continue;
+          struct proc *head = &((&cpus[i])->head_runnable);
+          acquire(&head->lock);
+          if (head->next != -1) {     // can steal
+            acquire(&p->lock);
+            next = &proc[head->next];
+            acquire(&next->lock);
+            remove(next->index, RUNNABLE_LIST);
+            next->cpu = cpuid();
+            int counter;
+            do {
+              counter = (&cpus[cpuid()])->counter;
+            } while (cas(&((&cpus[cpuid()])->counter), counter, counter+1));
+            release(&head->lock);
+            next->state = RUNNING;
+            c->proc = next;
+            release(&p->lock);
+            swtch(&c->context, &next->context);
+            c->proc = 0;
+            release(&next->lock);
+            break;
+          }
+          release(&head->lock);
+        }
+      #endif
     }
-
-    next = &proc[p->next];
-    acquire(&next->lock);
-    remove(next->index, RUNNABLE_LIST);
-    next->state = RUNNING;
-    release(&p->lock);
-    c->proc = next;
-    swtch(&c->context, &next->context);
-    // Process is done running for now.
-    // It should have changed its p->state before coming back.
-    c->proc = 0;
-    release(&next->lock);
+    else {
+      next = &proc[p->next];
+      acquire(&next->lock);
+      remove(next->index, RUNNABLE_LIST);
+      next->state = RUNNING;
+      c->proc = next;
+      release(&p->lock);
+      swtch(&c->context, &next->context);
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      c->proc = 0;
+      release(&next->lock);
+    }
   }
 }
 

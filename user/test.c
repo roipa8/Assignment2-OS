@@ -103,8 +103,8 @@ twochildren(char *s)
 
 
 int main(int argc, char** argv){
-    // testCAS();
-    manywrites("manywrites");
+    testCAS();
+    // manywrites("manywrites");
     // twochildren("twochildren");
     // printf("OK\n");
     exit(0);
